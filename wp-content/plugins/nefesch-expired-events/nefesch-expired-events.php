@@ -33,6 +33,8 @@ final class NEFESCH_Expired_Events {
 	 * @var string[]
 	 */
 	private $candidate_keys = [
+		'voxel:expiry_date',
+		'voxel:expiration_date',
 		'_expiration-date',
 		'_expiration_date',
 		'expiration_date',
@@ -149,6 +151,23 @@ final class NEFESCH_Expired_Events {
 			 LIMIT 1",
 			array_merge( $types, $keys )
 		) );
+
+		// Nothing from the known list: look for any key that names itself an
+		// expiry/expiration date on this post type, newest theme conventions included.
+		if ( '' === $found ) {
+			$found = (string) $wpdb->get_var( $wpdb->prepare(
+				"SELECT pm.meta_key
+				 FROM {$wpdb->postmeta} pm
+				 INNER JOIN {$wpdb->posts} p ON p.ID = pm.post_id
+				 WHERE p.post_type IN ({$type_holders})
+				   AND ( pm.meta_key LIKE %s OR pm.meta_key LIKE %s )
+				   AND pm.meta_value <> ''
+				 GROUP BY pm.meta_key
+				 ORDER BY COUNT(*) DESC
+				 LIMIT 1",
+				array_merge( $types, [ '%expiry%', '%expiration%' ] )
+			) );
+		}
 
 		set_transient( self::KEY_CACHE . '_' . md5( implode( ',', $types ) ), $found, DAY_IN_SECONDS );
 

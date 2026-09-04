@@ -164,6 +164,87 @@ class NEFESCH_Expired_Events_CLI {
 	}
 
 	/**
+	 * Diagnose why events are not expiring on their own before adding anything.
+	 *
+	 * Reports the detected expiration key, whether WP-Cron is reachable, every
+	 * scheduled job that looks expiry-related, and how many events are already
+	 * past their date but still not in the expired status.
+	 *
+	 * ## OPTIONS
+	 *
+	 * [--post_type=<type>]
+	 *
+	 * @when after_wp_load
+	 */
+	public function doctor( $args, $assoc_args ) {
+		$overrides = [];
+
+		if ( isset( $assoc_args['post_type'] ) ) {
+			$overrides['post_type'] = $assoc_args['post_type'];
+		}
+
+		$filter = static function ( $config ) use ( $overrides ) {
+			return array_merge( $config, $overrides );
+		};
+
+		add_filter( 'nefesch_expired_events_config', $filter, 99 );
+		$plugin = NEFESCH_Expired_Events::instance();
+		$config = $plugin->config();
+		remove_filter( 'nefesch_expired_events_config', $filter, 99 );
+
+		WP_CLI::log( sprintf( 'Post type:        %s', implode( ', ', (array) $config['post_type'] ) ) );
+		WP_CLI::log( sprintf( 'Expiration key:   %s', $config['meta_key'] ?: 'NOT FOUND' ) );
+		WP_CLI::log( sprintf(
+			'Target status:    %s (%s)',
+			$config['target_status'],
+			get_post_status_object( $config['target_status'] ) ? 'registered' : 'NOT REGISTERED'
+		) );
+		WP_CLI::log( sprintf(
+			'DISABLE_WP_CRON:  %s',
+			defined( 'DISABLE_WP_CRON' ) && DISABLE_WP_CRON ? 'true (needs a system cron)' : 'false'
+		) );
+
+		$rows = [];
+
+		foreach ( (array) _get_cron_array() as $timestamp => $hooks ) {
+			foreach ( (array) $hooks as $hook => $events ) {
+				if ( ! preg_match( '/expir|voxel|nefesch/i', $hook ) ) {
+					continue;
+				}
+				$rows[] = [
+					'hook'     => $hook,
+					'next_run' => wp_date( 'Y-m-d H:i', $timestamp ),
+					'overdue'  => $timestamp < time() ? sprintf( '%d h', floor( ( time() - $timestamp ) / HOUR_IN_SECONDS ) ) : '-',
+				];
+			}
+		}
+
+		if ( $rows ) {
+			WP_CLI::log( '' );
+			WP_CLI\Utils\format_items( 'table', $rows, [ 'hook', 'next_run', 'overdue' ] );
+			WP_CLI::log( 'An overdue job means WP-Cron is not firing. Fix that before adding automation.' );
+		} else {
+			WP_CLI::warning( 'No expiry-related cron job scheduled.' );
+		}
+
+		if ( ! $config['meta_key'] ) {
+			return;
+		}
+
+		$result = nefesch_remove_expired_events( array_merge( $overrides, [
+			'dry_run' => true,
+			'batch'   => 500,
+		] ) );
+
+		WP_CLI::log( '' );
+		WP_CLI::log( sprintf(
+			'Events past their expiration date but still live: %d%s',
+			$result['processed'],
+			$result['ids'] ? ' (e.g. ' . implode( ', ', array_slice( $result['ids'], 0, 10 ) ) . ')' : ''
+		) );
+	}
+
+	/**
 	 * Run the cleanup now.
 	 *
 	 * ## OPTIONS
