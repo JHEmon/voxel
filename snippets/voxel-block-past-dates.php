@@ -115,13 +115,14 @@ add_action( 'wp_enqueue_scripts', function () {
 		return;
 	}
 
-	// Runs before the create-post bundle, so every Pikaday it builds inside the
-	// create-post form gets a minDate. Pickers elsewhere (booking, search) are untouched.
+	/**
+	 * Voxel defers both `pikaday` and `vx:create-post.js` (Assets_Controller::$deferred_scripts),
+	 * so this inline script runs BEFORE Pikaday's own file has executed — window.Pikaday does
+	 * not exist yet. Install a setter instead, and wrap whatever Pikaday assigns to it.
+	 */
 	$js = <<<'JS'
 (function () {
-	if (typeof window.Pikaday !== 'function') { return; }
-
-	var Original = window.Pikaday;
+	var DEBUG = !!window.NEFESCH_PICKER_DEBUG;
 
 	function startOfToday() {
 		var d = new Date();
@@ -131,26 +132,70 @@ add_action( 'wp_enqueue_scripts', function () {
 
 	function inCreatePostForm(options) {
 		var el = options.container || options.field;
-		return !!(el && el.closest && el.closest('.ts-create-post'));
-	}
 
-	window.Pikaday = function (options) {
-		options = options || {};
-
-		if (!options.minDate && inCreatePostForm(options)) {
-			options.minDate = startOfToday();
-
-			var previous = options.disableDayFn;
-			options.disableDayFn = function (date) {
-				if (date < startOfToday()) { return true; }
-				return previous ? previous.call(this, date) : undefined;
-			};
+		if (el && el.closest && el.closest('.ts-create-post')) {
+			return true;
 		}
 
-		return new Original(options);
-	};
+		// The popup may be rendered outside the form; fall back to "this page is a
+		// create-post page", which is true for the submission form and not for a
+		// booking or search widget on a normal page.
+		return !!document.querySelector('.ts-create-post');
+	}
 
-	window.Pikaday.prototype = Original.prototype;
+	function wrap(Original) {
+		if (typeof Original !== 'function' || Original.__nefeschWrapped) {
+			return Original;
+		}
+
+		function Wrapped(options) {
+			options = options || {};
+
+			if (!options.minDate && inCreatePostForm(options)) {
+				options.minDate = startOfToday();
+
+				var previous = options.disableDayFn;
+				options.disableDayFn = function (date) {
+					if (date < startOfToday()) {
+						return true;
+					}
+					return previous ? previous.call(this, date) : undefined;
+				};
+
+				if (DEBUG) { console.log('[nefesch] picker limited to today onwards'); }
+			} else if (DEBUG) {
+				console.log('[nefesch] picker left unrestricted', options.container || options.field);
+			}
+
+			return new Original(options);
+		}
+
+		Wrapped.prototype = Original.prototype;
+		Wrapped.__nefeschWrapped = true;
+
+		return Wrapped;
+	}
+
+	if (typeof window.Pikaday === 'function') {
+		window.Pikaday = wrap(window.Pikaday);
+		if (DEBUG) { console.log('[nefesch] Pikaday wrapped immediately'); }
+		return;
+	}
+
+	// Pikaday is deferred and has not loaded yet — catch the assignment.
+	var stored;
+
+	Object.defineProperty(window, 'Pikaday', {
+		configurable: true,
+		enumerable: true,
+		get: function () {
+			return stored;
+		},
+		set: function (value) {
+			stored = wrap(value);
+			if (DEBUG) { console.log('[nefesch] Pikaday wrapped on assignment'); }
+		}
+	});
 })();
 JS;
 
