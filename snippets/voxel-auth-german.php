@@ -105,3 +105,22 @@ add_filter( 'gettext_with_context', function ( $translated, $text, $context, $do
 
 	return $de[ $text ] ?? $translated;
 }, 10, 4 );
+
+/* -------------------------------------------------------------------------
+ * Post feed result counts — \Voxel\count_format() in app/utils/utils.php
+ * ---------------------------------------------------------------------- */
+
+add_filter( 'gettext_with_context', function ( $translated, $text, $context, $domain ) {
+	if ( 'voxel' !== $domain || 'post feed' !== $context ) {
+		return $translated;
+	}
+
+	static $de = [
+		'No results'                   => 'Keine Ergebnisse',
+		'One result'                   => 'Ein Ergebnis',
+		'@count results'               => '@count Ergebnisse',
+		'@count out of @total results' => '@count von @total Ergebnissen',
+	];
+
+	return $de[ $text ] ?? $translated;
+}, 10, 4 );
